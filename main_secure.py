@@ -6,7 +6,6 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 from openai import OpenAI
 import nest_asyncio
 import tempfile
-from telegram.constants import DocumentMimeType
 from PyPDF2 import PdfReader
 import docx
 
