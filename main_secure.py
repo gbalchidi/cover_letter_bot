@@ -5,6 +5,10 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from openai import OpenAI
 import nest_asyncio
+import tempfile
+from telegram.constants import DocumentMimeType
+from PyPDF2 import PdfReader
+import docx
 
 # Try to load environment variables from .env file
 try:
@@ -366,6 +370,48 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Reset processing flag
             context.user_data['processing'] = False
 
+# Handler for document uploads (PDF/DOCX)
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    document = update.message.document
+    if not document:
+        await update.message.reply_text("Не удалось получить файл. Пожалуйста, попробуйте еще раз.")
+        return
+
+    file_name = document.file_name.lower()
+    mime_type = document.mime_type
+    file = await context.bot.get_file(document.file_id)
+
+    # Download file to a temporary location
+    with tempfile.NamedTemporaryFile(delete=True) as tmp:
+        await file.download_to_drive(tmp.name)
+        try:
+            if file_name.endswith('.pdf') or (mime_type and 'pdf' in mime_type):
+                # Parse PDF
+                reader = PdfReader(tmp.name)
+                text = "\n".join(page.extract_text() or '' for page in reader.pages)
+            elif file_name.endswith('.docx') or (mime_type and 'word' in mime_type):
+                # Parse DOCX
+                doc = docx.Document(tmp.name)
+                text = "\n".join([para.text for para in doc.paragraphs])
+            else:
+                await update.message.reply_text("Формат файла не поддерживается. Пожалуйста, отправьте PDF или DOCX.")
+                return
+        except Exception as e:
+            logger.error(f"Ошибка при обработке файла: {e}")
+            await update.message.reply_text("Не удалось прочитать файл. Пожалуйста, убедитесь, что файл не поврежден и повторите попытку.")
+            return
+
+    # Сохраняем текст резюме и переводим пользователя в режим подачи вакансий
+    context.user_data['cv'] = text
+    context.user_data['state'] = READY_FOR_JOBS
+    await update.message.reply_text(
+        'Отлично! Я сохранил ваше резюме из файла. ✅\n\n'
+        'Теперь просто отправляйте мне тексты вакансий, и я буду генерировать персонализированные сопроводительные письма.\n\n'
+        'Команды:\n'
+        '/reset - обновить резюме\n'
+        '/show_cv - показать сохраненное резюме'
+    )
+
 def main() -> None:
     """Start the bot."""
     application = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -374,6 +420,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("show_cv", show_cv))
+    application.add_handler(MessageHandler(filters.Document.PDF | filters.Document.DOCX, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Run the bot
