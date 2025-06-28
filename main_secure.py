@@ -145,137 +145,121 @@ async def show_cv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             'У вас пока нет сохраненного резюме. Отправьте его мне!'
         )
 
-# Part 1: About Me section
-async def generate_about_me(job_text, cv_text):
-    """Generate the 'About Me' section of the cover letter."""
-    prompt = f"""Я хочу, чтобы ты помог мне составить часть сопроводительного письма "О себе" (заголовок добавлять не нужно). Когда я предоставляю резюме и текст вакансии, сделай следующее:
+# Generate complete cover letter
+async def generate_cover_letter(job_text, cv_text):
+    """Generate a complete cover letter using a single API call."""
+    system_message = """Я хочу, чтобы ты выступил в роли эксперта карьерного консультирования и составил полное сопроводительное письмо на основе моего резюме и текста вакансии. Внимательно проанализируй описание позиции и действуй по следующему плану:
 
-Начни письмо с приветствия: "Здравствуйте, меня зовут <Имя>, увидел, что вы в поиске <Название позиции>." Используй имя из резюме и название позиции из вакансии (если в вакансии явно не указано название позиции, выбери его по смыслу). Имя и позицию не переводить.
-Найди в резюме блок "О себе" (summary, profile или аналогичный). Если такой блок есть — просто скопируй этот текст БЕЗ КАКИХ-ЛИБО изменений, дополнений или творческой обработки. Включить разрешается только прямой перевод этого блока на язык вакансии, если языки различаются.
-Если блока "О себе" в резюме нет, саммари сгенерируй из всего резюме на 3 предложения, выделяя опыт и ключевые навыки.
-Весь результат должен быть на языке, на котором написана вакансия: если вакансия на русском — всё на русском, если на английском — на английском.
+1. **Приветствие и "О себе"**
+    
+    — Начни с фразы: "Здравствуйте, меня зовут <Имя>, увидел, что вы в поиске <Название позиции>."
+    
+    — Имя возьми из резюме, название позиции — из вакансии (если не указано явно, выбери по смыслу).
+    
+    — Найди в резюме раздел "О себе" (или "Summary", "Profile" и т.п.):
+    
+    • Если он есть — просто вставь его текст без изменений.
+    
+    • Если раздела нет — составь саммари на 3 предложения, выделяя ключевой опыт и навыки.
+    
+    — Убедись, что весь результат на том же языке, что и вакансия: русский — всё по-русски, английский — всё по-английски.
+    
+2. **Соответствие требованиям**
+    
+    — Определи 5 ключевых требований или задач из вакансии.
+    
+    — Для каждого подбери краткое и конкретное достижение из резюме, включая метрики, если есть.
+    
+    — Если прямого соответствия нет — подбери смежный опыт и честно обозначь это как зону роста.
+    
+    — Вывод напиши в формате:
+    
+    Почему я хорошо подхожу для <Company X>
+    
+    <Ключевая задача или требование> → <Соответствующее достижение>
+    
+    … (5 строк)
+    
+3. **Мотивация: Почему хочу работать здесь**
+    
+    — Посмотри, что сказано о компании: миссия, подход, ценности, продукты, культура.
+    
+    — Напиши искренний абзац (3–4 предложения), как если бы объяснял другу, почему тебе правда интересна эта команда или проект.
+    
+    — Ссылайся на конкретные ценности, детали или проекты, которые тебя "зажигают".
+    
+    — Если миссия не указана, опиши, почему задачи или сфера тебя привлекают.
+    
+4. **Контактный блок**
+    
+    — Извлеки из резюме: имя, телефон, e-mail, город и (если есть) ссылку на LinkedIn или профиль.
+    
+    — Выведи отдельным списком в следующем формате (только те поля, которые есть):
+    
+    Имя:
+    
+    Телефон:
+    
+    E-mail:
+    
+    Город:
+    
+    LinkedIn:
+    
+    — В конце добавь одну неформальную строку-CTA, например: "Если потребуется что-то уточнить — всегда на связи!"
+    
 
-Не добавляй никаких других секций, пояснений, подписей, выводов, ключевых навыков, дополнительного текста, перефразирований или аннотаций, кроме приветствия и блока "О себе". Если блок "О себе" есть, просто вставь его, либо переведи для единого языка, но не дописывай ничего от себя.
+Общие правила:
 
-Текст вакансии:
+— Не добавляй заголовков, подписей или пояснений к частям письма.
+
+— Всё письмо — на языке вакансии.
+
+— Не повторяй одни и те же фразы по частям.
+
+— Сохраняй естественный, уважительный, но живой тон.
+
+— Соблюдай общую длину письма в пределах 220–300 слов."""
+
+    user_message = f"""Текст вакансии:
 {job_text}
 
 Резюме:
 {cv_text}"""
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=500
-    )
-    return response.choices[0].message.content.strip()
-
-# Part 2: Why am I a good fit?
-async def generate_good_fit(job_text, cv_text):
-    """Generate the 'Why am I a good fit' section."""
-    prompt = f"""Я хочу, чтобы ты выступил в роли эксперта карьерного консультирования и автора сопроводительных писем. 
-
-ВАЖНО: Ты анализируешь ВАКАНСИЮ, а НЕ резюме. Название компании для которой пишется письмо нужно брать ТОЛЬКО из вакансии. В резюме указаны прошлые места работы - они НЕ являются целевой компанией!
-
-Когда я предоставляю тебе текст вакансии и своё резюме:
-1. Найди в ВАКАНСИИ название компании (обычно в начале текста вакансии, например "Мы Place.01...")
-2. Проанализируй описание позиции из ВАКАНСИИ и выдели пять самых важных требований
-3. Для каждого требования подбери релевантное достижение из резюме
-
-Финальный вывод должен содержать только следующее:
-Почему я хорошо подхожу для <company X>
-Требование/задача → Моё достижение
-Требование/задача → Моё достижение
-Требование/задача → Моё достижение
-Требование/задача → Моё достижение
-Требование/задача → Моё достижение
-
-Где <company X> — название компании ИЗ ВАКАНСИИ (НЕ из резюме!), без перевода и изменений.
-В выводе не должно быть слова "Требование", нумерации, скобок или вспомогательных слов перед/после пар. Только заголовок и 5 пар строк в указанном формате, по одному на каждой строке.
-
-Если вакансия на русском — пиши на русском, если на английском — на английском.
-
-Текст вакансии:
-{job_text}
-
-Резюме:
-{cv_text}"""
-
-    response = client.chat.completions.create(
-        model="gpt-4-turbo",  # or "gpt-4o" for better performance
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3,
-        max_tokens=700
-    )
-    return response.choices[0].message.content.strip()
-
-# Part 3: Why do I want to work at this company?
-async def generate_why_company(job_text, cv_text):
-    """Generate the 'Why I want to work at this company' section."""
-    prompt = f"""Я хочу, чтобы ты помог мне написать часть сопроводительного письма "Почему я хочу работать в этой компании?" (заголовок добавлять не нужно). 
-
-ВАЖНО: Компания, для которой пишется письмо, указана в ВАКАНСИИ, а НЕ в резюме. В резюме указаны прошлые места работы кандидата.
-
-Когда я даю тебе текст вакансии и своё резюме, действуй так:
-1. Найди в ВАКАНСИИ название компании и её описание (обычно в начале, например "Мы Place.01...")
-2. Посмотри на описание ЭТОЙ компании из ВАКАНСИИ: чем она занимается, какие ценности или миссию озвучивает
-3. Взгляни на резюме, чтобы понять опыт кандидата
-4. Составь короткий абзац (3-4 предложения) о том, почему кандидату интересна именно КОМПАНИЯ ИЗ ВАКАНСИИ
-
-Используй простые искренние формулировки. Обязательно опирайся на конкретные факты о компании ИЗ ВАКАНСИИ.
-
-Если вакансия на русском — весь текст на русском; если на английском — на английском.
-Не добавляй никаких подписей, заголовков, пояснений, только сам "личный" абзац.
-
-Текст вакансии:
-{job_text}
-
-Резюме:
-{cv_text}"""
-
-    response = client.chat.completions.create(
-        model="gpt-4-turbo",  # or "gpt-4o"
-        messages=[{"role": "user", "content": prompt}],
+        model="gpt-4.1-mini",
+        messages=[
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": user_message}
+        ],
         temperature=0.7,
-        max_tokens=400
-    )
-    return response.choices[0].message.content.strip()
-
-# Part 4: Contacts
-async def generate_contacts(job_text, cv_text):
-    """Generate the contacts section."""
-    prompt = f"""Я хочу, чтобы ты помог мне составить финальный блок сопроводительного письма — контакты. Когда я даю тебе своё резюме, выполни следующее:
-
-Извлеки все контактные данные из резюме: имя, телефон, e-mail, город и (если есть) ссылку на LinkedIn или другой профессиональный профиль.
-Размести эти контакты простым отдельным списком: Имя: Телефон: E-mail: Город: LinkedIn: (Указывай только те поля, которые действительно есть в резюме.)
-В конце добавь одну ненавязчивую, дружелюбную строку-CTA ("Буду рад(а) ответить на ваши вопросы", "Если потребуется что-то уточнить — всегда на связи", "Готов(а) обсудить детали — пишите!" и т.п., неофициально и без формальностей).
-Ответ пиши на языке вакансии: если вакансия на русском — всё на русском; если на английском — на английском.
-
-Не добавляй никаких заголовков, вступлений, подписей, только список контактов и ненавязчивый CTA.
-
-Текст вакансии:
-{job_text}
-
-Резюме:
-{cv_text}"""
-
-    response = client.chat.completions.create(
-        model="gpt-4-turbo",  # or "gpt-4o"
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.5,
-        max_tokens=300
+        max_tokens=1500
     )
     return response.choices[0].message.content.strip()
 
 # Main message handler
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_message = update.message.text
-    chat_id = update.message.chat_id
-
+    # Get text from regular message or forwarded message
+    user_message = None
+    
+    # Check if it's a regular text message
+    if update.message.text:
+        user_message = update.message.text
+    # Check if it's a forwarded message with text
+    elif update.message.forward_from and update.message.text:
+        user_message = update.message.text
+    elif update.message.forward_from_chat and update.message.text:
+        user_message = update.message.text
+    # Check if it's a forwarded message with caption
+    elif update.message.caption:
+        user_message = update.message.caption
+    
     if not user_message:
-        await update.message.reply_text("Пожалуйста, отправьте текстовое сообщение.")
+        await update.message.reply_text("Пожалуйста, отправьте текстовое сообщение или перешлите сообщение с описанием вакансии.")
         return
+
+    chat_id = update.message.chat_id
 
     # Get current state
     state = context.user_data.get('state', WAITING_FOR_CV)
@@ -288,7 +272,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         await update.message.reply_text(
             'Отлично! Я сохранил ваше резюме. ✅\n\n'
-            'Теперь просто отправляйте мне тексты вакансий, '
+            'Теперь просто отправляйте мне тексты вакансий или пересылайте сообщения с вакансиями, '
             'и я буду генерировать персонализированные сопроводительные письма.\n\n'
             'Команды:\n'
             '/reset - обновить резюме\n'
@@ -316,28 +300,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Detect primary language of the job posting
             input_language = detect_primary_language(job_text)
             
-            # Generate all parts
-            logger.info("Generating About Me section...")
-            about_me = await generate_about_me(job_text, cv_text)
+            # Generate complete cover letter
+            logger.info("Generating complete cover letter...")
+            cover_letter = await generate_cover_letter(job_text, cv_text)
             
-            logger.info("Generating Good Fit section...")
-            good_fit = await generate_good_fit(job_text, cv_text)
-            
-            logger.info("Generating Why Company section...")
-            why_company = await generate_why_company(job_text, cv_text)
-            
-            logger.info("Generating Contacts section...")
-            contacts = await generate_contacts(job_text, cv_text)
-            
-            # Combine all parts
-            cover_letter = f"""{about_me}
-
-{good_fit}
-
-{why_company}
-
-{contacts}"""
-
             # Check language consistency
             letter_language = check_language_consistency(cover_letter)
             
