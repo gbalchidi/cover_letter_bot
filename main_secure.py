@@ -9,8 +9,7 @@ import tempfile
 from PyPDF2 import PdfReader
 import docx
 from repositories.supabase_client import SupabaseClient
-from repositories.user_repository import UserRepository
-from repositories.resume_repository import ResumeRepository
+from repositories.repositories import UserRepository, ResumeRepository
 
 # Try to load environment variables from .env file
 try:
