@@ -8,7 +8,7 @@ import nest_asyncio
 import tempfile
 from PyPDF2 import PdfReader
 import docx
-from supabase import create_client, Client
+from repositories.supabase_client import SupabaseClient
 from repositories.user_repository import UserRepository
 from repositories.resume_repository import ResumeRepository
 
@@ -45,7 +45,9 @@ READY_FOR_JOBS = "ready_for_jobs"
 # Supabase client initialization
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("SUPABASE_URL и SUPABASE_KEY должны быть заданы в переменных окружения!")
+supabase = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
 user_repo = UserRepository(supabase)
 resume_repo = ResumeRepository(supabase)
 
@@ -116,8 +118,9 @@ def escape_markdown_v2(text):
 # Function to handle the /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     telegram_id = update.message.from_user.id
-    user = await user_repo.get_or_create_user(telegram_id)
-    resume = await resume_repo.get_active_resume(user['id'])
+    username = update.message.from_user.username
+    user = await user_repo.get_or_create_user(telegram_id, username)
+    resume = await resume_repo.get_resume(telegram_id)
     if resume:
         context.user_data['state'] = READY_FOR_JOBS
         await update.message.reply_text(
@@ -133,9 +136,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Function to reset CV
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     telegram_id = update.message.from_user.id
-    user = await user_repo.get_or_create_user(telegram_id)
-    # Деактивируем все резюме пользователя
-    supabase.table('resumes').update({'is_active': False}).eq('user_id', user['id']).execute()
+    # Просто сохраняем пустое резюме (или можно реализовать отдельный метод удаления)
+    await resume_repo.save_resume(telegram_id, "")
     context.user_data['state'] = WAITING_FOR_CV
     await update.message.reply_text(
         'Резюме удалено. Отправьте мне новое резюме для сохранения.'
@@ -144,8 +146,7 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Function to show saved CV
 async def show_cv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     telegram_id = update.message.from_user.id
-    user = await user_repo.get_or_create_user(telegram_id)
-    cv_text = await resume_repo.get_active_resume(user['id'])
+    cv_text = await resume_repo.get_resume(telegram_id)
     if cv_text:
         cv_preview = cv_text[:500] + "..." if len(cv_text) > 500 else cv_text
         escaped_cv = escape_markdown_v2(cv_preview)
@@ -256,7 +257,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Get text from regular message or forwarded message
     user_message = None
     telegram_id = update.message.from_user.id
-    user = await user_repo.get_or_create_user(telegram_id)
+    username = update.message.from_user.username
+    user = await user_repo.get_or_create_user(telegram_id, username)
     
     # Check if it's a regular text message
     if update.message.text:
@@ -282,7 +284,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Handle CV submission
     if state == WAITING_FOR_CV:
         # Сохраняем резюме в БД
-        await resume_repo.save_resume(user['id'], user_message)
+        await resume_repo.save_resume(telegram_id, user_message)
         context.user_data['state'] = READY_FOR_JOBS
         await update.message.reply_text(
             'Резюме сохранено в базе данных! ✅\n\n'
@@ -308,7 +310,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         try:
             # Get saved CV from DB
-            cv_text = await resume_repo.get_active_resume(user['id'])
+            cv_text = await resume_repo.get_resume(telegram_id)
             job_text = user_message
             
             if not cv_text:
@@ -365,7 +367,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     mime_type = document.mime_type
     file = await context.bot.get_file(document.file_id)
     telegram_id = update.message.from_user.id
-    user = await user_repo.get_or_create_user(telegram_id)
+    username = update.message.from_user.username
+    user = await user_repo.get_or_create_user(telegram_id, username)
 
     # Download file to a temporary location
     with tempfile.NamedTemporaryFile(delete=True) as tmp:
@@ -388,7 +391,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
 
     # Сохраняем текст резюме в БД и переводим пользователя в режим подачи вакансий
-    await resume_repo.save_resume(user['id'], text, file_name=file_name, file_type=mime_type)
+    await resume_repo.save_resume(telegram_id, text)
     context.user_data['state'] = READY_FOR_JOBS
     await update.message.reply_text(
         'Отлично! Я сохранил ваше резюме из файла. ✅\n\n'

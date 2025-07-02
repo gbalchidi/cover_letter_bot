@@ -1,18 +1,16 @@
-import uuid
+from typing import Optional
+from repositories.supabase_client import SupabaseClient
 
 class UserRepository:
-    def __init__(self, supabase):
-        self.supabase = supabase
-
-    async def get_or_create_user(self, telegram_id):
-        # Проверяем, есть ли пользователь
-        response = self.supabase.table('users').select('*').eq('telegram_id', telegram_id).execute()
-        if response.data:
-            return response.data[0]
-        # Если нет — создаём
-        user_id = str(uuid.uuid4())
-        response = self.supabase.table('users').insert({
-            'id': user_id,
-            'telegram_id': telegram_id
-        }).execute()
-        return response.data[0] 
+    def __init__(self, supabase_client: SupabaseClient):
+        self.client = supabase_client
+    
+    async def get_or_create_user(self, telegram_id: int, username: Optional[str] = None) -> dict:
+        users = await self.client.select('users', {'telegram_id': telegram_id})
+        if users:
+            return users[0]
+        new_user = await self.client.insert('users', {
+            'telegram_id': telegram_id,
+            'username': username
+        })
+        return new_user[0] if isinstance(new_user, list) else new_user 
