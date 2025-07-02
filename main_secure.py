@@ -135,8 +135,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Function to reset CV
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     telegram_id = update.message.from_user.id
-    # Просто сохраняем пустое резюме (или можно реализовать отдельный метод удаления)
-    await resume_repo.save_resume(telegram_id, "")
+    await resume_repo.delete_resume(telegram_id)
     context.user_data['state'] = WAITING_FOR_CV
     await update.message.reply_text(
         'Резюме удалено. Отправьте мне новое резюме для сохранения.'

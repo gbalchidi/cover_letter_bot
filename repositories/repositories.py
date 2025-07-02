@@ -1,5 +1,6 @@
 from typing import Optional
 from repositories.supabase_client import SupabaseClient
+import aiohttp
 
 class UserRepository:
     def __init__(self, supabase_client: SupabaseClient):
@@ -41,4 +42,9 @@ class ResumeRepository:
         )
         if profiles:
             return profiles[0].get('cv_text')
-        return None 
+        return None
+
+    async def delete_resume(self, telegram_id: int) -> None:
+        url = f"{self.client.url}/rest/v1/user_profiles?telegram_id=eq.{telegram_id}"
+        async with aiohttp.ClientSession() as session:
+            await session.delete(url, headers=self.client.headers) 
