@@ -10,6 +10,9 @@ from PyPDF2 import PdfReader
 import docx
 from repositories.supabase_client import SupabaseClient
 from repositories.repositories import UserRepository, ResumeRepository
+from hh_client import HHAPIClient, HHVacancySearcher
+from resume_analyzer import ResumeAnalyzer
+from vacancy_scorer import VacancyScorer
 
 # Try to load environment variables from .env file
 try:
@@ -36,6 +39,11 @@ logger = logging.getLogger(__name__)
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Initialize HH.ru services
+hh_client = HHAPIClient()
+resume_analyzer = ResumeAnalyzer(client)
+vacancy_scorer = VacancyScorer()
 
 # States for conversation
 WAITING_FOR_CV = "waiting_for_cv"
@@ -399,6 +407,184 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         '/show_cv - показать сохраненное резюме'
     )
 
+# ===== ТЕСТОВЫЕ КОМАНДЫ (УДАЛИТЬ В ПРОДАКШЕНЕ) =====
+
+async def test_hh_connection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Тестирует подключение к HH.ru API"""
+    await update.message.reply_text("🔍 Тестирую подключение к HH.ru...")
+    
+    try:
+        async with HHAPIClient() as client:
+            # Простой поиск
+            result = await client.search_vacancies({'text': 'python', 'per_page': 5})
+            found_count = result.get('found', 0)
+            items_count = len(result.get('items', []))
+            
+            await update.message.reply_text(
+                f"✅ HH.ru API работает!\n"
+                f"Найдено всего: {found_count} вакансий\n"
+                f"Получено: {items_count} в выборке"
+            )
+    except Exception as e:
+        logger.error(f"HH API test failed: {e}")
+        await update.message.reply_text(f"❌ Ошибка подключения к HH.ru: {str(e)}")
+
+async def test_resume_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Тестирует анализ резюме пользователя"""
+    telegram_id = update.message.from_user.id
+    cv_text = await resume_repo.get_resume(telegram_id)
+    
+    if not cv_text:
+        await update.message.reply_text("❌ Сначала загрузите резюме командой /start")
+        return
+    
+    await update.message.reply_text("🧠 Анализирую ваше резюме...")
+    
+    try:
+        profile = await resume_analyzer.analyze_resume(cv_text)
+        
+        message = "✅ Анализ резюме завершен:\n\n"
+        message += f"📋 Должность: {profile.get('exact_position', 'Не определена')}\n"
+        message += f"🎯 Уровень: {profile.get('experience_level', 'Не определен')}\n"
+        message += f"⚡ Навыки: {', '.join(profile.get('top_skills', [])[:3])}\n"
+        message += f"🏢 Домен: {profile.get('domain', 'Не определен')}\n"
+        message += f"💰 Зарплата: {profile.get('salary_from', 'Не указана')}\n"
+        message += f"📍 Регионы: {profile.get('areas', [])}\n"
+        message += f"🔧 Fallback: {'Да' if profile.get('fallback_used') else 'Нет'}"
+        
+        await update.message.reply_text(message)
+        
+        # Сохраняем профиль для дальнейших тестов
+        context.user_data['test_profile'] = profile
+        
+    except Exception as e:
+        logger.error(f"Resume analysis test failed: {e}")
+        await update.message.reply_text(f"❌ Ошибка анализа резюме: {str(e)}")
+
+async def test_vacancy_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Тестирует поиск вакансий"""
+    telegram_id = update.message.from_user.id
+    cv_text = await resume_repo.get_resume(telegram_id)
+    
+    if not cv_text:
+        await update.message.reply_text("❌ Сначала загрузите резюме")
+        return
+    
+    await update.message.reply_text("🔍 Ищу вакансии для вас...")
+    
+    try:
+        # Анализируем резюме
+        profile = await resume_analyzer.analyze_resume(cv_text)
+        
+        # Ищем вакансии
+        async with HHAPIClient() as client:
+            searcher = HHVacancySearcher(client)
+            vacancies = await searcher.search_with_fallback(profile)
+            
+            # Скорим найденные вакансии
+            scored_vacancies = vacancy_scorer.score_and_rank_vacancies(vacancies, profile)
+            
+            if not scored_vacancies:
+                await update.message.reply_text("❌ Вакансии не найдены")
+                return
+            
+            # Показываем топ-5
+            message = f"✅ Найдено {len(scored_vacancies)} вакансий. Топ-5:\n\n"
+            
+            for i, vacancy in enumerate(scored_vacancies[:5], 1):
+                score = vacancy.get('score', 0)
+                salary_info = ""
+                if vacancy.get('salary'):
+                    salary = vacancy['salary']
+                    salary_info = f" | 💰 {salary.get('from', 'от ?')} - {salary.get('to', 'до ?')} {salary.get('currency', 'RUR')}"
+                
+                message += f"{i}. **{vacancy['name']}**\n"
+                message += f"   🏢 {vacancy['employer']['name']}\n"
+                message += f"   📊 Score: {score:.3f}{salary_info}\n"
+                message += f"   🔗 {vacancy.get('alternate_url', 'Ссылка недоступна')}\n\n"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+    except Exception as e:
+        logger.error(f"Vacancy search test failed: {e}")
+        await update.message.reply_text(f"❌ Ошибка поиска вакансий: {str(e)}")
+
+async def show_debug_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает детальный анализ профиля"""
+    telegram_id = update.message.from_user.id
+    cv_text = await resume_repo.get_resume(telegram_id)
+    
+    if not cv_text:
+        await update.message.reply_text("❌ Сначала загрузите резюме")
+        return
+    
+    try:
+        profile = await resume_analyzer.analyze_resume(cv_text)
+        
+        # Форматируем JSON для читаемости
+        import json
+        profile_json = json.dumps(profile, ensure_ascii=False, indent=2)
+        
+        # Отправляем по частям если слишком длинно
+        if len(profile_json) > 4000:
+            await update.message.reply_text("📋 Полный профиль (часть 1):")
+            await update.message.reply_text(f"```json\n{profile_json[:4000]}\n```", parse_mode='Markdown')
+            await update.message.reply_text("📋 Полный профиль (часть 2):")
+            await update.message.reply_text(f"```json\n{profile_json[4000:]}\n```", parse_mode='Markdown')
+        else:
+            await update.message.reply_text("📋 Полный анализ профиля:")
+            await update.message.reply_text(f"```json\n{profile_json}\n```", parse_mode='Markdown')
+            
+    except Exception as e:
+        logger.error(f"Debug profile failed: {e}")
+        await update.message.reply_text(f"❌ Ошибка отладки профиля: {str(e)}")
+
+async def show_vacancy_scores(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает детальные скоры последних найденных вакансий"""
+    telegram_id = update.message.from_user.id
+    cv_text = await resume_repo.get_resume(telegram_id)
+    
+    if not cv_text:
+        await update.message.reply_text("❌ Сначала загрузите резюме")
+        return
+        
+    await update.message.reply_text("📊 Вычисляю детальные скоры...")
+    
+    try:
+        profile = await resume_analyzer.analyze_resume(cv_text)
+        
+        async with HHAPIClient() as client:
+            searcher = HHVacancySearcher(client)
+            vacancies = await searcher.search_with_fallback(profile)
+            
+            if not vacancies:
+                await update.message.reply_text("❌ Вакансии не найдены")
+                return
+            
+            # Берем топ-3 для детального анализа
+            top_vacancies = vacancies[:3]
+            
+            message = "📊 Детальный скоринг топ-3 вакансий:\n\n"
+            
+            for i, vacancy in enumerate(top_vacancies, 1):
+                score = vacancy_scorer.score_vacancy(vacancy, profile)
+                
+                message += f"{i}. **{vacancy['name'][:50]}...**\n"
+                message += f"   🏢 {vacancy['employer']['name']}\n"
+                message += f"   📊 Общий скор: {score:.3f}\n"
+                
+                # Здесь можно добавить детализацию скоров по компонентам
+                # Для простоты показываем только общий скор
+                message += "\n"
+            
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+    except Exception as e:
+        logger.error(f"Vacancy scores test failed: {e}")
+        await update.message.reply_text(f"❌ Ошибка анализа скоров: {str(e)}")
+
+# ===== КОНЕЦ ТЕСТОВЫХ КОМАНД =====
+
 def main() -> None:
     """Start the bot."""
     application = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -407,6 +593,14 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("show_cv", show_cv))
+    
+    # ТЕСТОВЫЕ КОМАНДЫ (удалить в продакшене)
+    application.add_handler(CommandHandler("test_hh", test_hh_connection))
+    application.add_handler(CommandHandler("test_resume", test_resume_analysis))
+    application.add_handler(CommandHandler("test_search", test_vacancy_search))
+    application.add_handler(CommandHandler("debug_profile", show_debug_profile))
+    application.add_handler(CommandHandler("show_scores", show_vacancy_scores))
+    
     application.add_handler(MessageHandler(filters.Document.PDF | filters.Document.DOCX, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
