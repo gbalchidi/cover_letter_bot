@@ -13,6 +13,7 @@ from repositories.repositories import UserRepository, ResumeRepository
 from hh_client import HHAPIClient, HHVacancySearcher
 from resume_analyzer import ResumeAnalyzer
 from vacancy_scorer import VacancyScorer
+from scheduler import VacancyScheduler
 
 # Try to load environment variables from .env file
 try:
@@ -601,11 +602,108 @@ def main() -> None:
     application.add_handler(CommandHandler("debug_profile", show_debug_profile))
     application.add_handler(CommandHandler("show_scores", show_vacancy_scores))
     
+    # Команда для полного тестирования цикла
+    async def test_full_cycle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Тестирует полный цикл: анализ резюме -> поиск -> скоринг -> топ-10"""
+        telegram_id = update.message.from_user.id
+        cv_text = await resume_repo.get_resume(telegram_id)
+        
+        if not cv_text:
+            await update.message.reply_text("❌ Сначала загрузите резюме")
+            return
+        
+        await update.message.reply_text("🔄 Запускаю полный цикл тестирования...")
+        
+        try:
+            # Шаг 1: Анализ резюме
+            profile = await resume_analyzer.analyze_resume(cv_text)
+            await update.message.reply_text(f"✅ Шаг 1: Резюме проанализировано\n📋 Должность: {profile.get('exact_position')}\n💰 Зарплата: {profile.get('salary_from', 'Не указана')} RUR/месяц")
+            
+            # Шаг 2: Поиск вакансий
+            async with HHAPIClient() as client:
+                searcher = HHVacancySearcher(client)
+                all_vacancies = await searcher.search_with_fallback(profile)
+            
+            await update.message.reply_text(f"✅ Шаг 2: Найдено {len(all_vacancies)} вакансий")
+            
+            # Шаг 3: Скоринг и фильтрация
+            scored_vacancies = vacancy_scorer.score_and_rank_vacancies(all_vacancies, profile)
+            
+            await update.message.reply_text(f"✅ Шаг 3: После фильтрации релевантности: {len(scored_vacancies)} вакансий")
+            
+            # Шаг 4: Топ-10 для отправки
+            top_vacancies = scored_vacancies[:10]
+            
+            if top_vacancies:
+                message = f"✅ Шаг 4: Топ-{len(top_vacancies)} вакансий для отправки:\n\n"
+                
+                for i, vacancy in enumerate(top_vacancies, 1):
+                    score = vacancy.get('score', 0)
+                    message += f"{i}. **{vacancy['name'][:40]}...**\n"
+                    message += f"   🏢 {vacancy['employer']['name']}\n"
+                    message += f"   📊 Релевантность: {score:.1%}\n\n"
+                
+                await update.message.reply_text(message, parse_mode='Markdown')
+            else:
+                await update.message.reply_text("❌ Релевантных вакансий не найдено")
+            
+        except Exception as e:
+            logger.error(f"Full cycle test failed: {e}")
+            await update.message.reply_text(f"❌ Ошибка полного цикла: {str(e)}")
+    
+    application.add_handler(CommandHandler("test_full", test_full_cycle))
+    
     application.add_handler(MessageHandler(filters.Document.PDF | filters.Document.DOCX, handle_document))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Run the bot
+    # Запуск бота с интегрированным планировщиком
     logger.info("Bot started polling...")
+    
+    # ВРЕМЕННО: простая команда для ручного запуска планировщика
+    async def start_daily_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Тестовая команда для запуска ежедневного поиска вручную"""
+        # ВРЕМЕННО: команда доступна всем для тестирования
+        # if update.message.from_user.id not in [your_telegram_id]:  # Замените на ваш ID
+        #     await update.message.reply_text("❌ Команда доступна только администратору")
+        #     return
+            
+        await update.message.reply_text("🔄 Запускаю ежедневный поиск вакансий...")
+        
+        try:
+            scheduler = VacancyScheduler(application.bot, client, supabase)
+            await scheduler.run_daily_search()
+            await update.message.reply_text("✅ Ежедневный поиск завершен")
+        except Exception as e:
+            logger.error(f"Daily search failed: {e}")
+            await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+    
+    # Добавляем команду для тестирования
+    application.add_handler(CommandHandler("daily_search", start_daily_search))
+    
+    # Тестовая команда для отображения SQL схемы
+    async def show_sql_schema(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Показывает SQL схему для создания таблицы sent_vacancies"""
+        sql_schema = """
+-- SQL схема для Supabase (выполните в SQL Editor)
+CREATE TABLE IF NOT EXISTS sent_vacancies (
+    id SERIAL PRIMARY KEY,
+    telegram_id BIGINT NOT NULL,
+    vacancy_id VARCHAR(50) NOT NULL,
+    vacancy_name TEXT,
+    employer_name TEXT,
+    score DECIMAL(5,3),
+    sent_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(telegram_id, vacancy_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sent_vacancies_telegram_id ON sent_vacancies(telegram_id);
+CREATE INDEX IF NOT EXISTS idx_sent_vacancies_sent_at ON sent_vacancies(sent_at);
+        """
+        
+        await update.message.reply_text(f"📋 SQL схема для Supabase:\n\n```sql{sql_schema}\n```", parse_mode='Markdown')
+    
+    application.add_handler(CommandHandler("sql_schema", show_sql_schema))
+    
     application.run_polling()
 
 if __name__ == '__main__':

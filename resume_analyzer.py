@@ -64,9 +64,9 @@ class ResumeAnalyzer:
   "industries": ["отрасли в которых работал"],
   "salary_expectation": {
     "has_explicit": true/false,
-    "estimated_min": число_или_null,
-    "estimated_max": число_или_null,
-    "currency": "RUR/USD/EUR"
+    "estimated_min": число_в_рублях_за_месяц_или_null,
+    "estimated_max": число_в_рублях_за_месяц_или_null,
+    "currency": "RUR"
   },
   "location_preferences": {
     "current_location": "город",
@@ -84,7 +84,11 @@ class ResumeAnalyzer:
 Правила анализа:
 1. experience_level определяй по годам: 0-1=junior, 1-3=middle, 3-6=senior, 6+=lead
 2. areas: 1=Москва, 2=СПб, 3=Екатеринбург, 4=Новосибирск  
-3. Если зарплата не указана явно - оцени по рынку для данного уровня
+3. ЗАРПЛАТА ВАЖНО: 
+   - ВСЕ суммы ТОЛЬКО в российских рублях (RUR) ЗА МЕСЯЦ
+   - Если указана в USD - умножь на 90 для конвертации в рубли
+   - Если указана за год - раздели на 12 для получения месячной суммы
+   - Если не указана - оцени по рынку РФ для данного уровня в рублях за месяц
 4. top_skills - только технические навыки, без soft skills
 5. Если что-то неясно - используй разумные значения по умолчанию
 
@@ -142,7 +146,37 @@ class ResumeAnalyzer:
         # Обработка зарплатных ожиданий
         salary_data = profile_data.get('salary_expectation', {})
         if salary_data.get('estimated_min'):
-            profile_data['salary_from'] = salary_data['estimated_min']
+            # ИСПРАВЛЕНИЕ: Нормализация зарплаты к рублям за месяц
+            salary_min = salary_data['estimated_min']
+            currency = salary_data.get('currency', 'RUR')
+            
+            # Конвертация валюты
+            if currency == 'USD':
+                salary_min = salary_min * 90  # Примерный курс USD->RUR
+                logger.info(f"Converted salary from USD to RUR: {salary_min}")
+            elif currency == 'EUR':
+                salary_min = salary_min * 100  # Примерный курс EUR->RUR
+                logger.info(f"Converted salary from EUR to RUR: {salary_min}")
+            
+            # Проверка на годовую зарплату (слишком большая сумма)
+            if salary_min > 2000000:  # Больше 2млн рублей = вероятно годовая
+                salary_min = salary_min / 12
+                logger.info(f"Converted yearly salary to monthly: {salary_min}")
+            
+            # Проверка на разумность (минимум 30к, максимум 1млн в месяц)
+            if salary_min < 30000:
+                salary_min = None
+                logger.warning("Salary too low, setting to None")
+            elif salary_min > 1000000:
+                salary_min = 1000000
+                logger.warning("Salary too high, capping at 1M")
+            
+            profile_data['salary_from'] = int(salary_min) if salary_min else None
+            
+            # Обновляем данные в структуре
+            if salary_min:
+                profile_data['salary_expectation']['estimated_min'] = int(salary_min)
+                profile_data['salary_expectation']['currency'] = 'RUR'
         
         # Обработка локации
         location_data = profile_data.get('location_preferences', {})

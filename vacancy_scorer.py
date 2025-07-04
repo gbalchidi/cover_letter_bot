@@ -98,14 +98,29 @@ class VacancyScorer:
             vacancy_with_score = {**vacancy, 'score': score}
             scored_vacancies.append(vacancy_with_score)
         
+        # ИСПРАВЛЕНИЕ: Фильтруем по минимальному порогу релевантности
+        MIN_RELEVANCE_THRESHOLD = 0.25  # Минимум 25% релевантности
+        relevant_vacancies = [v for v in scored_vacancies if v['score'] >= MIN_RELEVANCE_THRESHOLD]
+        
+        # Если релевантных мало - немного снижаем порог
+        if len(relevant_vacancies) < 5:
+            MIN_RELEVANCE_THRESHOLD = 0.15  # Снижаем до 15%
+            relevant_vacancies = [v for v in scored_vacancies if v['score'] >= MIN_RELEVANCE_THRESHOLD]
+            logger.warning(f"Lowered relevance threshold to {MIN_RELEVANCE_THRESHOLD}")
+        
         # Сортируем по убыванию скора
-        scored_vacancies.sort(key=lambda x: x['score'], reverse=True)
+        relevant_vacancies.sort(key=lambda x: x['score'], reverse=True)
         
-        logger.info(f"Scored {len(scored_vacancies)} vacancies. "
-                   f"Top score: {scored_vacancies[0]['score']:.3f}, "
-                   f"Bottom score: {scored_vacancies[-1]['score']:.3f}")
+        if relevant_vacancies:
+            logger.info(f"Filtered to {len(relevant_vacancies)} relevant vacancies. "
+                       f"Top score: {relevant_vacancies[0]['score']:.3f}, "
+                       f"Bottom score: {relevant_vacancies[-1]['score']:.3f}")
+        else:
+            logger.warning("No relevant vacancies found after filtering")
+            # Возвращаем топ-5 из всех, если совсем ничего нет
+            relevant_vacancies = sorted(scored_vacancies, key=lambda x: x['score'], reverse=True)[:5]
         
-        return scored_vacancies
+        return relevant_vacancies
     
     def _get_weights(self, vacancy: Dict, user_profile: Dict) -> Dict:
         """Определяет веса в зависимости от наличия зарплатных данных"""

@@ -252,8 +252,14 @@ class HHVacancySearcher:
                 
                 logger.info(f"Mode {mode}: found {len(new_vacancies)} new vacancies (total: {len(all_vacancies)})")
                 
-                # Если набрали достаточно - прекращаем поиск
-                if len(all_vacancies) >= 50:
+                # ИСПРАВЛЕНИЕ: Более строгие критерии остановки
+                if mode == 'strict' and len(all_vacancies) >= 20:
+                    logger.info("Enough strict matches found, skipping broader search")
+                    break
+                elif mode == 'relaxed' and len(all_vacancies) >= 30:
+                    logger.info("Enough relaxed matches found, skipping broader search")
+                    break
+                elif len(all_vacancies) >= 50:
                     break
                     
             except Exception as e:
@@ -291,26 +297,52 @@ class HHVacancySearcher:
             }
             
         elif mode == 'relaxed':
-            skills_text = ' '.join(user_profile.get('top_skills', [])[:3])
+            # ИСПРАВЛЕНИЕ: Используем должность + основной навык вместо всех навыков
+            position = user_profile.get('exact_position', '')
+            main_skill = user_profile.get('top_skills', [''])[0] if user_profile.get('top_skills') else ''
+            
+            search_text = f"{position} {main_skill}".strip()
             return {
                 **base_params,
-                'text': skills_text,
+                'text': search_text,
                 'experience': user_profile.get('experience_level'),
                 'employment': ['full', 'project']
             }
             
         elif mode == 'broad':
+            # ИСПРАВЛЕНИЕ: Более точный поиск - альтернативные названия должности
+            alternatives = user_profile.get('alternative_positions', [])
+            if alternatives:
+                search_text = alternatives[0]  # Берем первую альтернативу
+            else:
+                # Fallback: сокращенная версия должности
+                position = user_profile.get('exact_position', '')
+                # Убираем лишние слова для более широкого поиска
+                position_words = position.split()
+                search_text = ' '.join(position_words[:2])  # Берем первые 2 слова
+                
             return {
                 **base_params,
-                'text': user_profile.get('domain', ''),
+                'text': search_text,
                 'area': [1, 2, 3, 4]  # Расширяем географию
             }
             
         elif mode == 'any':
+            # ИСПРАВЛЕНИЕ: Более консервативный 'any' режим
+            domain = user_profile.get('domain', '')
+            field = user_profile.get('field', '')
+            
+            # Предпочитаем domain, если он более специфичен
+            if len(domain) > len(field):
+                search_text = domain
+            else:
+                search_text = field
+                
             return {
                 **base_params,
-                'text': user_profile.get('field', ''),
-                'area': 113  # Вся Россия
+                'text': search_text,
+                'area': [1, 2, 3, 4],  # Не расширяем до всей России
+                'per_page': 50  # Меньше результатов для фильтрации
             }
             
         return base_params
