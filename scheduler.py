@@ -63,8 +63,12 @@ class VacancyScheduler:
             response = self.supabase.table("resumes").select("telegram_id").execute()
             
             if response.data:
-                return [{"telegram_id": row["telegram_id"]} for row in response.data]
-            return []
+                users = [{"telegram_id": row["telegram_id"]} for row in response.data]
+                logger.info(f"Found {len(users)} users with resumes: {[u['telegram_id'] for u in users]}")
+                return users
+            else:
+                logger.warning("No users with resumes found in database")
+                return []
             
         except Exception as e:
             logger.error(f"Failed to get active users: {e}")
@@ -146,11 +150,17 @@ class VacancyScheduler:
             ).gte("sent_at", cutoff_date.isoformat()).execute()
             
             if response.data:
-                return {row["vacancy_id"] for row in response.data}
-            return set()
+                sent_ids = {row["vacancy_id"] for row in response.data}
+                logger.info(f"User {telegram_id} has {len(sent_ids)} sent vacancies in last {days} days")
+                return sent_ids
+            else:
+                logger.info(f"User {telegram_id} has no sent vacancies in last {days} days")
+                return set()
             
         except Exception as e:
-            logger.error(f"Error getting sent vacancy IDs: {e}")
+            logger.error(f"Error getting sent vacancy IDs for user {telegram_id}: {e}")
+            logger.error(f"This might be because 'sent_vacancies' table doesn't exist. Use /sql_schema to create it.")
+            # Возвращаем пустой set чтобы не блокировать поиск
             return set()
     
     async def _send_vacancies_to_user(self, telegram_id: int, vacancies: List[Dict]):
@@ -177,15 +187,22 @@ class VacancyScheduler:
                     elif salary_to:
                         salary_info = f"💰 до {salary_to} {currency}"
                 
-                message += f"{i}. **{vacancy['name']}**\n"
+                vacancy_name = vacancy.get('name', 'Название не указано')
+                vacancy_url = vacancy.get('alternate_url', '')
+                
+                # Название с ссылкой
+                if vacancy_url:
+                    message += f"{i}. **[{vacancy_name}]({vacancy_url})**\n"
+                else:
+                    message += f"{i}. **{vacancy_name}**\n"
+                
                 message += f"🏢 {vacancy['employer']['name']}\n"
                 
                 if salary_info:
                     message += f"{salary_info}\n"
                 
                 message += f"📍 {vacancy.get('area', {}).get('name', 'Не указано')}\n"
-                message += f"📊 Релевантность: {score:.1%}\n"
-                message += f"🔗 [Подробнее]({vacancy.get('alternate_url', '')})\n\n"
+                message += f"📊 Релевантность: {score:.1%}\n\n"
             
             message += "Удачи в поиске работы! 🚀"
             
@@ -196,6 +213,8 @@ class VacancyScheduler:
                 parse_mode='Markdown',
                 disable_web_page_preview=True
             )
+            
+            logger.info(f"Successfully sent {len(vacancies)} vacancies to user {telegram_id}")
             
         except Exception as e:
             logger.error(f"Error sending message to user {telegram_id}: {e}")
@@ -219,11 +238,15 @@ class VacancyScheduler:
             # Вставляем записи в базу данных
             response = self.supabase.table(self.sent_vacancies_table).insert(records).execute()
             
-            if not response.data:
+            if response.data:
+                logger.info(f"Successfully saved {len(records)} sent vacancy records for user {telegram_id}")
+            else:
                 logger.warning(f"Failed to save sent vacancies for user {telegram_id}")
                 
         except Exception as e:
             logger.error(f"Error saving sent vacancies for user {telegram_id}: {e}")
+            logger.error(f"This might be because 'sent_vacancies' table doesn't exist. Use /sql_schema to create it.")
+            # Не падаем, просто логируем ошибку
 
 
 # Функция для создания таблицы sent_vacancies (если не существует)

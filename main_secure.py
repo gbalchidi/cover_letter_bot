@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from datetime import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 from openai import OpenAI
@@ -14,6 +15,7 @@ from hh_client import HHAPIClient, HHVacancySearcher
 from resume_analyzer import ResumeAnalyzer
 from vacancy_scorer import VacancyScorer
 from scheduler import VacancyScheduler
+from auto_scheduler import AutoScheduler
 
 # Try to load environment variables from .env file
 try:
@@ -45,6 +47,9 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 hh_client = HHAPIClient()
 resume_analyzer = ResumeAnalyzer(client)
 vacancy_scorer = VacancyScorer()
+
+# Initialize scheduler services
+auto_scheduler = None  # Будет инициализирован в main()
 
 # States for conversation
 WAITING_FOR_CV = "waiting_for_cv"
@@ -639,11 +644,20 @@ def main() -> None:
                 
                 for i, vacancy in enumerate(top_vacancies, 1):
                     score = vacancy.get('score', 0)
-                    message += f"{i}. **{vacancy['name'][:40]}...**\n"
-                    message += f"   🏢 {vacancy['employer']['name']}\n"
+                    vacancy_name = vacancy.get('name', 'Название не указано')
+                    employer_name = vacancy.get('employer', {}).get('name', 'Компания не указана')
+                    vacancy_url = vacancy.get('alternate_url', '')
+                    
+                    # Форматирование с полным названием и ссылкой
+                    if vacancy_url:
+                        message += f"{i}. **[{vacancy_name}]({vacancy_url})**\n"
+                    else:
+                        message += f"{i}. **{vacancy_name}**\n"
+                    
+                    message += f"   🏢 {employer_name}\n"
                     message += f"   📊 Релевантность: {score:.1%}\n\n"
                 
-                await update.message.reply_text(message, parse_mode='Markdown')
+                await update.message.reply_text(message, parse_mode='Markdown', disable_web_page_preview=True)
             else:
                 await update.message.reply_text("❌ Релевантных вакансий не найдено")
             
@@ -671,7 +685,23 @@ def main() -> None:
         
         try:
             scheduler = VacancyScheduler(application.bot, client, supabase)
-            await scheduler.run_daily_search()
+            
+            # Получаем пользователей
+            users = await scheduler._get_active_users()
+            await update.message.reply_text(f"📊 Найдено {len(users)} пользователей с резюме")
+            
+            if users:
+                for user in users:
+                    telegram_id = user["telegram_id"]
+                    await update.message.reply_text(f"🔄 Обрабатываю пользователя {telegram_id}...")
+                    
+                    try:
+                        await scheduler._process_user(user)
+                        await update.message.reply_text(f"✅ Пользователь {telegram_id} обработан")
+                    except Exception as e:
+                        logger.error(f"Error processing user {telegram_id}: {e}")
+                        await update.message.reply_text(f"❌ Ошибка для пользователя {telegram_id}: {str(e)}")
+            
             await update.message.reply_text("✅ Ежедневный поиск завершен")
         except Exception as e:
             logger.error(f"Daily search failed: {e}")
@@ -704,7 +734,61 @@ CREATE INDEX IF NOT EXISTS idx_sent_vacancies_sent_at ON sent_vacancies(sent_at)
     
     application.add_handler(CommandHandler("sql_schema", show_sql_schema))
     
-    application.run_polling()
+    
+    # === ЗАПУСК АВТОМАТИЧЕСКОГО ПЛАНИРОВЩИКА ===
+    
+    async def start_auto_scheduler():
+        """Запускает автоматический планировщик на 9:00 утра для всех"""
+        global auto_scheduler
+        try:
+            # Простой планировщик - всем в 9:00 утра
+            auto_scheduler = AutoScheduler(application.bot, client, supabase)
+            await auto_scheduler.start_scheduler(time(9, 0))  # 9:00 утра по Москве
+            logger.info("✅ Auto scheduler started - daily at 9:00 AM Moscow time")
+        except Exception as e:
+            logger.error(f"❌ Failed to start auto scheduler: {e}")
+    
+    async def stop_auto_scheduler():
+        """Останавливает планировщик при завершении бота"""
+        global auto_scheduler
+        if auto_scheduler:
+            try:
+                await auto_scheduler.scheduler.shutdown()
+                logger.info("✅ Auto scheduler stopped")
+            except Exception as e:
+                logger.error(f"❌ Error stopping scheduler: {e}")
+    
+    # Команда для проверки статуса планировщика
+    async def scheduler_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Показывает статус автоматического планировщика"""
+        global auto_scheduler
+        
+        if auto_scheduler and auto_scheduler.is_running():
+            from datetime import datetime
+            now = datetime.now()
+            next_run = auto_scheduler.get_next_run_time()
+            
+            message = "✅ Автоматический планировщик работает\n\n"
+            message += f"📅 Текущее время: {now.strftime('%H:%M')} (Москва)\n"
+            message += f"⏰ Время отправки: 09:00 каждый день\n"
+            message += f"🕒 Следующая отправка: {next_run}\n\n"
+            message += "📊 Все пользователи с резюме получают вакансии автоматически в 9:00 утра"
+        else:
+            message = "❌ Автоматический планировщик не запущен"
+            
+        await update.message.reply_text(message)
+    
+    application.add_handler(CommandHandler("scheduler_status", scheduler_status))
+    
+    # Запускаем планировщик в фоне
+    import asyncio
+    asyncio.create_task(start_auto_scheduler())
+    
+    try:
+        application.run_polling()
+    finally:
+        # Останавливаем планировщик при завершении
+        asyncio.create_task(stop_auto_scheduler())
 
 if __name__ == '__main__':
     main() 
