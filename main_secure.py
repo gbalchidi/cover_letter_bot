@@ -780,15 +780,20 @@ CREATE INDEX IF NOT EXISTS idx_sent_vacancies_sent_at ON sent_vacancies(sent_at)
     
     application.add_handler(CommandHandler("scheduler_status", scheduler_status))
     
-    # Запускаем планировщик в фоне
-    import asyncio
-    asyncio.create_task(start_auto_scheduler())
+    # Добавляем хук для запуска планировщика после старта бота
+    async def post_init(application):
+        """Запускается после инициализации бота"""
+        await start_auto_scheduler()
     
-    try:
-        application.run_polling()
-    finally:
-        # Останавливаем планировщик при завершении
-        asyncio.create_task(stop_auto_scheduler())
+    async def post_stop(application):
+        """Запускается при остановке бота"""
+        await stop_auto_scheduler()
+    
+    application.post_init = post_init
+    application.post_stop = post_stop
+    
+    # Запускаем бота
+    application.run_polling()
 
 if __name__ == '__main__':
     main() 
