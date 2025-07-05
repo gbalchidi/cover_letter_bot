@@ -780,20 +780,56 @@ CREATE INDEX IF NOT EXISTS idx_sent_vacancies_sent_at ON sent_vacancies(sent_at)
     
     application.add_handler(CommandHandler("scheduler_status", scheduler_status))
     
-    # Добавляем хук для запуска планировщика после старта бота
-    async def post_init(application):
-        """Запускается после инициализации бота"""
-        await start_auto_scheduler()
+    # Команда для принудительного запуска/перезапуска планировщика
+    async def restart_scheduler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Перезапускает планировщик"""
+        global auto_scheduler
+        
+        try:
+            # Останавливаем текущий планировщик если есть
+            if auto_scheduler:
+                await auto_scheduler.stop_scheduler()
+                await update.message.reply_text("⏹️ Старый планировщик остановлен")
+            
+            # Запускаем новый
+            await start_auto_scheduler()
+            await update.message.reply_text("✅ Планировщик перезапущен! Следующая отправка в 9:00 утра по Москве")
+            
+        except Exception as e:
+            logger.error(f"Error restarting scheduler: {e}")
+            await update.message.reply_text(f"❌ Ошибка перезапуска планировщика: {str(e)}")
     
-    async def post_stop(application):
-        """Запускается при остановке бота"""
-        await stop_auto_scheduler()
+    application.add_handler(CommandHandler("restart_scheduler", restart_scheduler))
     
-    application.post_init = post_init
-    application.post_stop = post_stop
+    # Запускаем планировщик в фоне после старта бота
+    async def run_bot():
+        """Запускает бота с планировщиком"""
+        try:
+            # Инициализируем бота
+            await application.initialize()
+            
+            # Запускаем планировщик
+            await start_auto_scheduler()
+            logger.info("✅ Bot and scheduler initialized successfully")
+            
+            # Запускаем бота
+            await application.start()
+            await application.updater.start_polling()
+            
+            # Держим бота запущенным
+            await application.updater.idle()
+            
+        except Exception as e:
+            logger.error(f"❌ Error running bot: {e}")
+        finally:
+            # Останавливаем планировщик при завершении
+            await stop_auto_scheduler()
+            await application.stop()
+            await application.shutdown()
     
-    # Запускаем бота
-    application.run_polling()
+    # Запускаем через asyncio
+    import asyncio
+    asyncio.run(run_bot())
 
 if __name__ == '__main__':
     main() 
