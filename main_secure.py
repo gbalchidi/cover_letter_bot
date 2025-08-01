@@ -753,7 +753,7 @@ CREATE INDEX IF NOT EXISTS idx_sent_vacancies_sent_at ON sent_vacancies(sent_at)
         global auto_scheduler
         if auto_scheduler:
             try:
-                await auto_scheduler.scheduler.shutdown()
+                auto_scheduler.scheduler.shutdown()
                 logger.info("✅ Auto scheduler stopped")
             except Exception as e:
                 logger.error(f"❌ Error stopping scheduler: {e}")
@@ -812,20 +812,14 @@ CREATE INDEX IF NOT EXISTS idx_sent_vacancies_sent_at ON sent_vacancies(sent_at)
             await start_auto_scheduler()
             logger.info("✅ Bot and scheduler initialized successfully")
             
-            # Запускаем бота
-            await application.start()
-            await application.updater.start_polling()
-            
-            # Держим бота запущенным
-            await application.updater.idle()
+            # Запускаем бота с polling (современный API)
+            await application.run_polling()
             
         except Exception as e:
             logger.error(f"❌ Error running bot: {e}")
         finally:
             # Останавливаем планировщик при завершении
             await stop_auto_scheduler()
-            await application.stop()
-            await application.shutdown()
     
     # Запускаем через asyncio
     import asyncio
