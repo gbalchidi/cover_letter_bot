@@ -24,6 +24,9 @@ class VacancyScheduler:
         self.openai_client = openai_client
         self.supabase = supabase_client
         
+        # Async lock to prevent concurrent runs
+        self._search_lock = asyncio.Lock()
+        
         # Инициализация компонентов
         self.user_repo = UserRepository(supabase_client)
         self.resume_repo = ResumeRepository(supabase_client)
@@ -35,26 +38,28 @@ class VacancyScheduler:
         
     async def run_daily_search(self):
         """Основная функция ежедневного поиска"""
-        logger.info("Starting daily vacancy search...")
-        
-        try:
-            # Получаем всех активных пользователей
-            active_users = await self._get_active_users()
-            logger.info(f"Found {len(active_users)} active users")
+        # Use async lock to prevent concurrent runs
+        async with self._search_lock:
+            logger.info("Starting daily vacancy search...")
             
-            # Обрабатываем каждого пользователя
-            for user in active_users:
-                try:
-                    await self._process_user(user)
-                    # Небольшая пауза между пользователями
-                    await asyncio.sleep(2)
-                except Exception as e:
-                    logger.error(f"Error processing user {user.get('telegram_id')}: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Daily search failed: {e}")
-            
-        logger.info("Daily vacancy search completed")
+            try:
+                # Получаем всех активных пользователей
+                active_users = await self._get_active_users()
+                logger.info(f"Found {len(active_users)} active users")
+                
+                # Обрабатываем каждого пользователя
+                for user in active_users:
+                    try:
+                        await self._process_user(user)
+                        # Небольшая пауза между пользователями
+                        await asyncio.sleep(2)
+                    except Exception as e:
+                        logger.error(f"Error processing user {user.get('telegram_id')}: {e}")
+                        
+            except Exception as e:
+                logger.error(f"Daily search failed: {e}")
+                
+            logger.info("Daily vacancy search completed")
     
     async def _get_active_users(self) -> List[Dict]:
         """Получает список активных пользователей с резюме"""
@@ -279,27 +284,8 @@ async def create_sent_vacancies_table(supabase_client):
         logger.error(f"Error creating table schema: {e}")
 
 
-# Основная функция для запуска планировщика
-async def run_scheduler(bot, openai_client, supabase_client):
-    """Запускает планировщик с интервалом в 24 часа"""
-    scheduler = VacancyScheduler(bot, openai_client, supabase_client)
-    
-    # Создаем таблицу если нужно
-    await create_sent_vacancies_table(supabase_client)
-    
-    while True:
-        try:
-            # Запускаем ежедневный поиск
-            await scheduler.run_daily_search()
-            
-            # Ждем 24 часа до следующего запуска
-            logger.info("Waiting 24 hours until next search...")
-            await asyncio.sleep(24 * 60 * 60)  # 24 часа
-            
-        except Exception as e:
-            logger.error(f"Scheduler error: {e}")
-            # Ждем час и пробуем снова
-            await asyncio.sleep(60 * 60)
+# REMOVED: Manual scheduler function to prevent conflicts with AutoScheduler
+# The AutoScheduler (auto_scheduler.py) handles all scheduling automatically
 
 
 # Тестовая функция

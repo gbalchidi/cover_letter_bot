@@ -16,7 +16,19 @@ logger = logging.getLogger(__name__)
 class AutoScheduler:
     """Автоматический планировщик с настраиваемым временем"""
     
+    _instance = None
+    _lock = asyncio.Lock()
+    
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
     def __init__(self, bot, openai_client, supabase_client):
+        # Avoid re-initializing if already initialized
+        if hasattr(self, 'initialized'):
+            return
+            
         self.bot = bot
         self.openai_client = openai_client
         self.supabase_client = supabase_client
@@ -26,6 +38,8 @@ class AutoScheduler:
         # Настройки по умолчанию
         self.default_time = time(9, 0)  # 9:00 утра
         self.timezone = pytz.timezone('Europe/Moscow')  # Московское время
+        
+        self.initialized = True
         
     async def start_scheduler(self, send_time: time = None):
         """
