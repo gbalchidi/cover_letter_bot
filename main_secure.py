@@ -17,6 +17,7 @@ from vacancy_scorer import VacancyScorer
 from scheduler import VacancyScheduler
 from auto_scheduler import AutoScheduler
 import hh_commands
+import auto_apply_service
 
 # Try to load environment variables from .env file
 try:
@@ -622,6 +623,9 @@ def main() -> None:
     application.add_handler(CommandHandler("hh_logout", hh_commands.hh_logout_command))
     application.add_handler(CommandHandler("hh_apply", hh_commands.hh_apply_command))
 
+    # Auto-apply callback handler
+    application.add_handler(auto_apply_service.get_apply_callback_handler())
+
     # ТЕСТОВЫЕ КОМАНДЫ (удалить в продакшене)
     application.add_handler(CommandHandler("test_hh", test_hh_connection))
     application.add_handler(CommandHandler("test_resume", test_resume_analysis))
@@ -658,28 +662,10 @@ def main() -> None:
             
             await update.message.reply_text(f"✅ Шаг 3: После фильтрации релевантности: {len(scored_vacancies)} вакансий")
             
-            # Шаг 4: Топ-10 для отправки
-            top_vacancies = scored_vacancies[:10]
-            
-            if top_vacancies:
-                message = f"✅ Шаг 4: Топ-{len(top_vacancies)} вакансий для отправки:\n\n"
-                
-                for i, vacancy in enumerate(top_vacancies, 1):
-                    score = vacancy.get('score', 0)
-                    vacancy_name = vacancy.get('name', 'Название не указано')
-                    employer_name = vacancy.get('employer', {}).get('name', 'Компания не указана')
-                    vacancy_url = vacancy.get('alternate_url', '')
-                    
-                    # Форматирование с полным названием и ссылкой
-                    if vacancy_url:
-                        message += f"{i}. **[{vacancy_name}]({vacancy_url})**\n"
-                    else:
-                        message += f"{i}. **{vacancy_name}**\n"
-                    
-                    message += f"   🏢 {employer_name}\n"
-                    message += f"   📊 Релевантность: {score:.1%}\n\n"
-                
-                await update.message.reply_text(message, parse_mode='Markdown', disable_web_page_preview=True)
+            # Шаг 4: Показываем вакансии с кнопками для автоотклика
+            if scored_vacancies:
+                await update.message.reply_text(f"✅ Шаг 4: Найдено {len(scored_vacancies)} релевантных вакансий")
+                await auto_apply_service.show_vacancies_for_apply(update, context, scored_vacancies)
             else:
                 await update.message.reply_text("❌ Релевантных вакансий не найдено")
             
@@ -865,6 +851,12 @@ CREATE INDEX IF NOT EXISTS idx_sent_vacancies_sent_at ON sent_vacancies(sent_at)
             hh_commands.hh_oauth_repo = hh_oauth_repo
             hh_commands.hh_resumes_repo = hh_resumes_repo
             hh_commands.sent_vacancies_repo = sent_vacancies_repo
+
+            # Initialize auto_apply_service module repositories
+            auto_apply_service.hh_oauth_repo = hh_oauth_repo
+            auto_apply_service.hh_resumes_repo = hh_resumes_repo
+            auto_apply_service.sent_vacancies_repo = sent_vacancies_repo
+            auto_apply_service.resume_repo = resume_repo
 
             # Run the bot
             await run_bot()
