@@ -25,7 +25,7 @@ services:
   oauth_webhook:
     build: .
     container_name: cover_letter_bot_webhook
-    command: python oauth_webhook.py
+    command: ["python", "oauth_webhook.py"]
     depends_on:
       postgres:
         condition: service_healthy
