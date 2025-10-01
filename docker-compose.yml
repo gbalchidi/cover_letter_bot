@@ -21,6 +21,25 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # OAuth Webhook Server
+  oauth_webhook:
+    build: .
+    container_name: cover_letter_bot_webhook
+    command: python oauth_webhook.py
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-bot_user}:${POSTGRES_PASSWORD:-your_secure_password_here}@postgres:5432/${POSTGRES_DB:-cover_letter_bot}
+      HH_CLIENT_ID: ${HH_CLIENT_ID}
+      HH_CLIENT_SECRET: ${HH_CLIENT_SECRET}
+      HH_REDIRECT_URI: ${HH_REDIRECT_URI}
+    ports:
+      - "${WEBHOOK_PORT:-8080}:8080"
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
   # Telegram Bot Application (optional - if you want to run bot in Docker)
   bot:
     build: .
@@ -28,10 +47,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      oauth_webhook:
+        condition: service_started
     environment:
       BOT_TOKEN: ${BOT_TOKEN}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       DATABASE_URL: postgresql://${POSTGRES_USER:-bot_user}:${POSTGRES_PASSWORD:-your_secure_password_here}@postgres:5432/${POSTGRES_DB:-cover_letter_bot}
+      HH_CLIENT_ID: ${HH_CLIENT_ID}
+      HH_CLIENT_SECRET: ${HH_CLIENT_SECRET}
+      HH_REDIRECT_URI: ${HH_REDIRECT_URI}
     volumes:
       - .:/app
     restart: unless-stopped

@@ -10,12 +10,13 @@ import tempfile
 from PyPDF2 import PdfReader
 import docx
 from repositories.postgres_client import PostgresClient
-from repositories.repositories import UserRepository, ResumeRepository
+from repositories.repositories import UserRepository, ResumeRepository, HHOAuthRepository, HHUserResumesRepository, SentVacanciesRepository
 from hh_client import HHAPIClient, HHVacancySearcher
 from resume_analyzer import ResumeAnalyzer
 from vacancy_scorer import VacancyScorer
 from scheduler import VacancyScheduler
 from auto_scheduler import AutoScheduler
+import hh_commands
 
 # Try to load environment variables from .env file
 try:
@@ -74,6 +75,9 @@ if not DATABASE_URL:
 pg_client = None
 user_repo = None
 resume_repo = None
+hh_oauth_repo = None
+hh_resumes_repo = None
+sent_vacancies_repo = None
 
 # Function to detect language
 def detect_primary_language(text):
@@ -610,7 +614,14 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(CommandHandler("show_cv", show_cv))
-    
+
+    # HH.ru OAuth commands
+    application.add_handler(CommandHandler("hh_auth", hh_commands.hh_auth_command))
+    application.add_handler(CommandHandler("hh_status", hh_commands.hh_status_command))
+    application.add_handler(CommandHandler("hh_resumes", hh_commands.hh_resumes_command))
+    application.add_handler(CommandHandler("hh_logout", hh_commands.hh_logout_command))
+    application.add_handler(CommandHandler("hh_apply", hh_commands.hh_apply_command))
+
     # ТЕСТОВЫЕ КОМАНДЫ (удалить в продакшене)
     application.add_handler(CommandHandler("test_hh", test_hh_connection))
     application.add_handler(CommandHandler("test_resume", test_resume_analysis))
@@ -835,7 +846,7 @@ CREATE INDEX IF NOT EXISTS idx_sent_vacancies_sent_at ON sent_vacancies(sent_at)
     # Initialize global database connection
     async def init_app():
         """Initialize application and database connection"""
-        global pg_client, user_repo, resume_repo
+        global pg_client, user_repo, resume_repo, hh_oauth_repo, hh_resumes_repo, sent_vacancies_repo
 
         try:
             # Create PostgreSQL client and connect
@@ -846,6 +857,14 @@ CREATE INDEX IF NOT EXISTS idx_sent_vacancies_sent_at ON sent_vacancies(sent_at)
             # Initialize repositories
             user_repo = UserRepository(pg_client)
             resume_repo = ResumeRepository(pg_client)
+            hh_oauth_repo = HHOAuthRepository(pg_client)
+            hh_resumes_repo = HHUserResumesRepository(pg_client)
+            sent_vacancies_repo = SentVacanciesRepository(pg_client)
+
+            # Initialize HH commands module repositories
+            hh_commands.hh_oauth_repo = hh_oauth_repo
+            hh_commands.hh_resumes_repo = hh_resumes_repo
+            hh_commands.sent_vacancies_repo = sent_vacancies_repo
 
             # Run the bot
             await run_bot()
