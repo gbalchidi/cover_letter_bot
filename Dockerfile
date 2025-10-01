@@ -6,6 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
+    bash \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install Python dependencies
@@ -21,8 +22,5 @@ RUN chmod +x entrypoint.sh
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Set entrypoint
-ENTRYPOINT ["./entrypoint.sh"]
-
-# Default command (can be overridden)
-CMD ["python", "main_secure.py"]
+# Run migrations and start app
+CMD ["bash", "-c", "./entrypoint.sh python main_secure.py"]

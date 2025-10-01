@@ -1,0 +1,4 @@
+# Coolify deployment configuration
+# Force use of Dockerfile instead of Nixpacks
+
+buildPack: dockerfile
