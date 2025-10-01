@@ -9,7 +9,7 @@ import nest_asyncio
 import tempfile
 from PyPDF2 import PdfReader
 import docx
-from repositories.supabase_client import SupabaseClient
+from repositories.postgres_client import PostgresClient
 from repositories.repositories import UserRepository, ResumeRepository
 from hh_client import HHAPIClient, HHVacancySearcher
 from resume_analyzer import ResumeAnalyzer
@@ -55,14 +55,25 @@ auto_scheduler = None  # Будет инициализирован в main()
 WAITING_FOR_CV = "waiting_for_cv"
 READY_FOR_JOBS = "ready_for_jobs"
 
-# Supabase client initialization
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("SUPABASE_URL и SUPABASE_KEY должны быть заданы в переменных окружения!")
-supabase = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
-user_repo = UserRepository(supabase)
-resume_repo = ResumeRepository(supabase)
+# PostgreSQL client initialization
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    # Fallback: construct from separate variables
+    POSTGRES_USER = os.getenv("POSTGRES_USER", "bot_user")
+    POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+    POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+    POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+    POSTGRES_DB = os.getenv("POSTGRES_DB", "cover_letter_bot")
+
+    if not POSTGRES_PASSWORD:
+        raise RuntimeError("DATABASE_URL или POSTGRES_PASSWORD должны быть заданы в переменных окружения!")
+
+    DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+
+# Initialize PostgreSQL client (global instance)
+pg_client = None
+user_repo = None
+resume_repo = None
 
 # Function to detect language
 def detect_primary_language(text):
@@ -821,9 +832,33 @@ CREATE INDEX IF NOT EXISTS idx_sent_vacancies_sent_at ON sent_vacancies(sent_at)
             # Останавливаем планировщик при завершении
             await stop_auto_scheduler()
     
+    # Initialize global database connection
+    async def init_app():
+        """Initialize application and database connection"""
+        global pg_client, user_repo, resume_repo
+
+        try:
+            # Create PostgreSQL client and connect
+            pg_client = PostgresClient(DATABASE_URL)
+            await pg_client.connect()
+            logger.info("✅ Database connected successfully")
+
+            # Initialize repositories
+            user_repo = UserRepository(pg_client)
+            resume_repo = ResumeRepository(pg_client)
+
+            # Run the bot
+            await run_bot()
+
+        finally:
+            # Cleanup: disconnect from database
+            if pg_client:
+                await pg_client.disconnect()
+                logger.info("Database disconnected")
+
     # Запускаем через asyncio
     import asyncio
-    asyncio.run(run_bot())
+    asyncio.run(init_app())
 
 if __name__ == '__main__':
     main() 
